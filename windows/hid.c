@@ -726,6 +726,9 @@ static struct hid_device_info *hid_internal_get_device_info(const wchar_t *path,
 	/* Get the Usage Page and Usage for this device. */
 	if (HidD_GetPreparsedData(handle, &pp_data)) {
 		if (HidP_GetCaps(pp_data, &caps) == HIDP_STATUS_SUCCESS) {
+
+      printf("\n  1/FeatureReportByteLength = %d \n", caps.FeatureReportByteLength);
+
 			dev->usage_page = caps.UsagePage;
 			dev->usage = caps.Usage;
 		}
@@ -794,17 +797,29 @@ struct hid_device_info HID_API_EXPORT * HID_API_CALL hid_enumerate(unsigned shor
 			return NULL;
 		}
 		cr = CM_Get_Device_Interface_ListW(&interface_class_guid, NULL, device_interface_list, len, CM_GET_DEVICE_INTERFACE_LIST_PRESENT);
+
+    static int n = 0;
+    printf("\n %d = %ls", n, device_interface_list);
+    n++;
+
 		if (cr != CR_SUCCESS && cr != CR_BUFFER_SMALL) {
 			register_global_error(L"Failed to get HID device interface list");
 		}
 	} while (cr == CR_BUFFER_SMALL);
 
 	if (cr != CR_SUCCESS) {
+      printf("\n !!!!!!!!!! wtf goto");
+
 		goto end_of_function;
 	}
 
 	/* Iterate over each device interface in the HID class, looking for the right one. */
+    static int x = 0;
 	for (wchar_t* device_interface = device_interface_list; *device_interface; device_interface += wcslen(device_interface) + 1) {
+
+    printf("\n d %d = %ls", x, device_interface);
+    x++;
+
 		HANDLE device_handle = INVALID_HANDLE_VALUE;
 		HIDD_ATTRIBUTES attrib;
 
@@ -814,12 +829,15 @@ struct hid_device_info HID_API_EXPORT * HID_API_CALL hid_enumerate(unsigned shor
 		/* Check validity of device_handle. */
 		if (device_handle == INVALID_HANDLE_VALUE) {
 			/* Unable to open the device. */
+      printf("\n !!!!!!!!!! FUCK");
+
 			continue;
 		}
 
 		/* Get the Vendor ID and Product ID for this device. */
 		attrib.Size = sizeof(HIDD_ATTRIBUTES);
 		if (!HidD_GetAttributes(device_handle, &attrib)) {
+      printf("\n !!!!!!!!!! GOTO");
 			goto cont_close;
 		}
 
@@ -829,14 +847,16 @@ struct hid_device_info HID_API_EXPORT * HID_API_CALL hid_enumerate(unsigned shor
 		    (product_id == 0x0 || attrib.ProductID == product_id)) {
 
 			/* VID/PID match. Create the record. */
+        printf("\n vid pid match");
 			struct hid_device_info *tmp = hid_internal_get_device_info(device_interface, device_handle);
 
 			if (tmp == NULL) {
+        printf("\n !!!!!!!!!! GOTO 2");
 				goto cont_close;
 			}
 
 			if (cur_dev) {
-				cur_dev->next = tmp;
+				cur_dev->next = tmp; // TODO why this is not used (2nd one whith correct 209 b report sz)
 			}
 			else {
 				root = tmp;
@@ -846,7 +866,7 @@ struct hid_device_info HID_API_EXPORT * HID_API_CALL hid_enumerate(unsigned shor
 
 cont_close:
 		CloseHandle(device_handle);
-	}
+	} // end for
 
 	if (root == NULL) {
 		if (vendor_id == 0 && product_id == 0) {
@@ -885,31 +905,42 @@ HID_API_EXPORT hid_device * HID_API_CALL hid_open(unsigned short vendor_id, unsi
 	hid_device *handle = NULL;
 
 	/* register_global_error: global error is reset by hid_enumerate/hid_init */
+  printf("\n enum");
 	devs = hid_enumerate(vendor_id, product_id);
+  printf("\n enum_");
 	if (!devs) {
 		/* register_global_error: global error is already set by hid_enumerate */
 		return NULL;
 	}
 
 	cur_dev = devs;
+  int found = 0;
 	while (cur_dev) {
 		if (cur_dev->vendor_id == vendor_id &&
 		    cur_dev->product_id == product_id) {
+
+      printf("\n sn %ls", cur_dev->serial_number);
 			if (serial_number) {
 				if (cur_dev->serial_number && wcscmp(serial_number, cur_dev->serial_number) == 0) {
 					path_to_open = cur_dev->path;
-					break;
+    			break;
 				}
 			}
 			else {
-				path_to_open = cur_dev->path;
-				break;
+        found++;
+        if(found == 2)
+        {
+  				path_to_open = cur_dev->path;
+  				break;
+        }
 			}
 		}
 		cur_dev = cur_dev->next;
 	}
 
 	if (path_to_open) {
+
+    printf("\n path_to_open %s", path_to_open);
 		/* Open the device */
 		handle = hid_open_path(path_to_open);
 	} else {
@@ -950,6 +981,8 @@ HID_API_EXPORT hid_device * HID_API_CALL hid_open_path(const char *path)
 		   them.  This is to prevent keyloggers.  However, feature reports
 		   can still be sent and received.  Retry opening the device, but
 		   without read/write access. */
+
+    printf("\n OPENEDED IN READ ONLY !!!");
 		device_handle = open_device(interface_path, FALSE);
 
 		/* Check the validity of the limited device_handle. */
@@ -971,10 +1004,14 @@ HID_API_EXPORT hid_device * HID_API_CALL hid_open_path(const char *path)
 		goto end_of_function;
 	}
 
+  //
 	if (HidP_GetCaps(pp_data, &caps) != HIDP_STATUS_SUCCESS) {
 		register_global_error(L"HidP_GetCaps");
 		goto end_of_function;
 	}
+
+  printf("\n  2/FeatureReportByteLength = %d \n", caps.FeatureReportByteLength);
+
 
 	dev = new_hid_device();
 
@@ -990,6 +1027,7 @@ HID_API_EXPORT hid_device * HID_API_CALL hid_open_path(const char *path)
 	dev->input_report_length = caps.InputReportByteLength;
 	dev->feature_report_length = caps.FeatureReportByteLength;
 	dev->read_buf = (char*) malloc(dev->input_report_length);
+  printf("\n call 1");
 	dev->device_info = hid_internal_get_device_info(interface_path, dev->device_handle);
 
 end_of_function:
@@ -1235,7 +1273,12 @@ static int hid_get_report(hid_device *dev, DWORD report_type, unsigned char *dat
 		&bytes_returned, &ol);
 
 	if (!res) {
-		if (GetLastError() != ERROR_IO_PENDING) {
+
+    int32_t e = GetLastError();
+    printf("\n fail = %d", e);
+
+
+		if (e != ERROR_IO_PENDING) {
 			/* DeviceIoControl() failed. Return error. */
 			register_winapi_error(dev, L"Get Input/Feature Report DeviceIoControl");
 			return -1;
@@ -1263,8 +1306,32 @@ static int hid_get_report(hid_device *dev, DWORD report_type, unsigned char *dat
 
 int HID_API_EXPORT HID_API_CALL hid_get_feature_report(hid_device *dev, unsigned char *data, size_t length)
 {
+  // typedef BOOLEAN (__stdcall *HidD_GetFeature_)(HANDLE handle, PVOID data, ULONG length);
+
+  // https://learn.microsoft.com/en-us/windows-hardware/drivers/ddi/hidsdi/nf-hidsdi-hidd_getfeature
+
+    // printf("\n IN API: FeatureReportByteLength = %d", dev->feature_report_length);
+
+
+
+  int ret = HidD_GetFeature(dev->device_handle, data, length);
+
+  if(ret)
+  {
+    return length;
+  }
+  else
+  {
+    int e = GetLastError();
+    printf("\n failed getfeature = %d", e);
+    register_winapi_error(dev, L"WTF");
+
+    return -1;
+  }
+
+
 	/* We could use HidD_GetFeature() instead, but it doesn't give us an actual length, unfortunately */
-	return hid_get_report(dev, IOCTL_HID_GET_FEATURE, data, length);
+	// return hid_get_report(dev, IOCTL_HID_GET_FEATURE, data, length);
 }
 
 int HID_API_EXPORT HID_API_CALL hid_get_input_report(hid_device *dev, unsigned char *data, size_t length)
